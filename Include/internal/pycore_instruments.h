@@ -11,8 +11,6 @@
 extern "C" {
 #endif
 
-#define PY_MONITORING_TOOL_IDS 8
-
 typedef uint32_t _PyMonitoringEventSet;
 
 /* Tool IDs */
@@ -31,7 +29,7 @@ typedef uint32_t _PyMonitoringEventSet;
 PyObject *_PyMonitoring_RegisterCallback(int tool_id, int event_id, PyObject *obj);
 
 int _PyMonitoring_SetEvents(int tool_id, _PyMonitoringEventSet events);
-int _PyMonitoring_SetLocalEvents(PyCodeObject *code, int tool_id, _PyMonitoringEventSet events);
+int _PyMonitoring_SetLocalEvents(PyCodeObject *code, int tool_id, _PyMonitoringEventSet events, PyObject* arg);
 int _PyMonitoring_GetLocalEvents(PyCodeObject *code, int tool_id, _PyMonitoringEventSet *events);
 
 extern int

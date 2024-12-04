@@ -184,9 +184,9 @@ monitors_equals(_Py_LocalMonitors a, _Py_LocalMonitors b)
 static inline _Py_LocalMonitors
 monitors_sub(_Py_LocalMonitors a, _Py_LocalMonitors b)
 {
-    _Py_LocalMonitors res;
+    _Py_LocalMonitors res = a;
     for (int i = 0; i < _PY_MONITORING_LOCAL_EVENTS; i++) {
-        res.tools[i] = a.tools[i] & ~b.tools[i];
+        res.tools[i] &= ~b.tools[i];
     }
     return res;
 }
@@ -211,9 +211,9 @@ monitors_and(_Py_LocalMonitors a, _Py_LocalMonitors b)
 static inline _Py_LocalMonitors
 local_union(_Py_GlobalMonitors a, _Py_LocalMonitors b)
 {
-    _Py_LocalMonitors res;
+    _Py_LocalMonitors res = b;
     for (int i = 0; i < _PY_MONITORING_LOCAL_EVENTS; i++) {
-        res.tools[i] = a.tools[i] | b.tools[i];
+        res.tools[i] |= a.tools[i];
     }
     return res;
 }
@@ -1799,11 +1799,61 @@ force_instrument_lock_held(PyCodeObject *code, PyInterpreterState *interp)
 
     if (new_line_tools) {
         _PyCoLineInstrumentationData *line_data = code->_co_monitoring->lines;
-        for (int i = code->_co_firsttraceable; i < code_len;) {
+        // Collect offsets to instrument from the args
+        PyObject* all_offsets = PySet_New(NULL);
+        for (int t = 0; t < PY_MONITORING_TOOL_IDS; t++) {
+            PyObject* arg = new_events.args[PY_MONITORING_EVENT_LINE][t];
+            if (arg) {
+                // Check the arg is a dict
+                if (!PyDict_Check(arg)) {
+                    PyErr_Format(PyExc_TypeError, "Expected a dict as argument for the LINE event (tool ID: %d)", t);
+                    return -1;
+                }
+
+                PyObject* offsets = PyDict_GetItemString(arg, "offsets");
+
+                // Check that it is a set
+                if (!PySet_Check(offsets)) {
+                    PyErr_Format(PyExc_TypeError, "Expected a set of offsets for the offset key of the argument for the LINE event (tool ID: %d)", t);
+                    return -1;
+                }
+
+                // Update the offsets set
+                PyObject* offset_iter = PyObject_GetIter(offsets);
+                PyObject* offset;
+                while ((offset = PyIter_Next(offset_iter))) {
+                    // Check that every offset is an integer
+                    if (!PyLong_Check(offset)) {
+                        PyErr_Format(PyExc_TypeError, "Expected offsets to be integers (tool ID: %d)", t);
+                        return -1;
+                    }
+                    if (PySet_Add(all_offsets, offset)) {
+                        return -1;
+                    }
+                }
+            }
+        }
+
+        Py_ssize_t offsets_len = PySet_Size(all_offsets);
+
+        for (int i = code->_co_firsttraceable; i < code_len; i += _PyInstruction_GetLength(code, i)) {
+            // If the offsets set is not empty and the offset is not in the set
+            // we should not instrument this line. If there are no offsets, we
+            // should instrument all lines.
+            if (offsets_len > 0) {
+                PyObject* offset = PyLong_FromLong(i << 1);
+                if (!offset) {
+                    return -1;
+                }
+                int offset_contained = PySet_Contains(all_offsets, offset);
+                Py_DECREF(offset);
+                if (!offset_contained) {
+                    continue;
+                }
+            }
             if (line_data[i].original_opcode) {
                 add_line_tools(code, i, new_line_tools);
             }
-            i += _PyInstruction_GetLength(code, i);
         }
     }
     if (new_per_instruction_tools) {
@@ -1900,14 +1950,21 @@ set_events(_Py_GlobalMonitors *m, int tool_id, _PyMonitoringEventSet events)
 }
 
 static void
-set_local_events(_Py_LocalMonitors *m, int tool_id, _PyMonitoringEventSet events)
+set_local_events(_Py_LocalMonitors *m, int tool_id, _PyMonitoringEventSet events, PyObject* arg)
 {
     assert(0 <= tool_id && tool_id < PY_MONITORING_TOOL_IDS);
     for (int e = 0; e < _PY_MONITORING_LOCAL_EVENTS; e++) {
         uint8_t *tools = &m->tools[e];
         int val = (events >> e) & 1;
+
         *tools &= ~(1 << tool_id);
+        Py_XDECREF(m->args[e][tool_id]);
+        m->args[e][tool_id] = NULL;
+
         *tools |= (val << tool_id);
+        if (val && arg) {
+            m->args[e][tool_id] = Py_NewRef(arg); // TODO: Are we leaking things here?
+        }
     }
 }
 
@@ -1963,7 +2020,7 @@ done:
 }
 
 int
-_PyMonitoring_SetLocalEvents(PyCodeObject *code, int tool_id, _PyMonitoringEventSet events)
+_PyMonitoring_SetLocalEvents(PyCodeObject *code, int tool_id, _PyMonitoringEventSet events, PyObject* arg)
 {
     assert(0 <= tool_id && tool_id < PY_MONITORING_TOOL_IDS);
     PyInterpreterState *interp = _PyInterpreterState_GET();
@@ -1989,7 +2046,7 @@ _PyMonitoring_SetLocalEvents(PyCodeObject *code, int tool_id, _PyMonitoringEvent
         res = 0;
         goto done;
     }
-    set_local_events(local, tool_id, events);
+    set_local_events(local, tool_id, events, arg);
 
     res = force_instrument_lock_held(code, interp);
 
@@ -2241,14 +2298,16 @@ monitoring.set_local_events
     tool_id: int
     code: object
     event_set: int
+    arg: object(c_default="NULL") = None
     /
 
 [clinic start generated code]*/
 
 static PyObject *
 monitoring_set_local_events_impl(PyObject *module, int tool_id,
-                                 PyObject *code, int event_set)
-/*[clinic end generated code: output=68cc755a65dfea99 input=5655ecd78d937a29]*/
+                                 PyObject *code, int event_set,
+                                 PyObject *arg)
+/*[clinic end generated code: output=ab3acb261d38351a input=975a9b44f4b56e1d]*/
 {
     if (!PyCode_Check(code)) {
         PyErr_Format(
@@ -2270,7 +2329,7 @@ monitoring_set_local_events_impl(PyObject *module, int tool_id,
         return NULL;
     }
 
-    if (_PyMonitoring_SetLocalEvents((PyCodeObject*)code, tool_id, event_set)) {
+    if (_PyMonitoring_SetLocalEvents((PyCodeObject*)code, tool_id, event_set, arg)) {
         return NULL;
     }
     Py_RETURN_NONE;

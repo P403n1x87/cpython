@@ -150,7 +150,7 @@ _PyEval_SetOpcodeTrace(
         }
         events &= (~(1 << PY_MONITORING_EVENT_INSTRUCTION));
     }
-    return _PyMonitoring_SetLocalEvents(code, PY_MONITORING_SYS_TRACE_ID, events);
+    return _PyMonitoring_SetLocalEvents(code, PY_MONITORING_SYS_TRACE_ID, events, NULL);
 }
 
 static PyObject *

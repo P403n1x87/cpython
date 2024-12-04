@@ -234,7 +234,7 @@ exit:
 }
 
 PyDoc_STRVAR(monitoring_set_local_events__doc__,
-"set_local_events($module, tool_id, code, event_set, /)\n"
+"set_local_events($module, tool_id, code, event_set, arg=None, /)\n"
 "--\n"
 "\n");
 
@@ -243,7 +243,8 @@ PyDoc_STRVAR(monitoring_set_local_events__doc__,
 
 static PyObject *
 monitoring_set_local_events_impl(PyObject *module, int tool_id,
-                                 PyObject *code, int event_set);
+                                 PyObject *code, int event_set,
+                                 PyObject *arg);
 
 static PyObject *
 monitoring_set_local_events(PyObject *module, PyObject *const *args, Py_ssize_t nargs)
@@ -252,8 +253,9 @@ monitoring_set_local_events(PyObject *module, PyObject *const *args, Py_ssize_t 
     int tool_id;
     PyObject *code;
     int event_set;
+    PyObject *arg = NULL;
 
-    if (!_PyArg_CheckPositional("set_local_events", nargs, 3, 3)) {
+    if (!_PyArg_CheckPositional("set_local_events", nargs, 3, 4)) {
         goto exit;
     }
     tool_id = PyLong_AsInt(args[0]);
@@ -265,7 +267,12 @@ monitoring_set_local_events(PyObject *module, PyObject *const *args, Py_ssize_t 
     if (event_set == -1 && PyErr_Occurred()) {
         goto exit;
     }
-    return_value = monitoring_set_local_events_impl(module, tool_id, code, event_set);
+    if (nargs < 4) {
+        goto skip_optional;
+    }
+    arg = args[3];
+skip_optional:
+    return_value = monitoring_set_local_events_impl(module, tool_id, code, event_set, arg);
 
 exit:
     return return_value;
@@ -304,4 +311,4 @@ monitoring__all_events(PyObject *module, PyObject *Py_UNUSED(ignored))
 {
     return monitoring__all_events_impl(module);
 }
-/*[clinic end generated code: output=14ffc0884a6de50a input=a9049054013a1b77]*/
+/*[clinic end generated code: output=59a0c47def4fd689 input=a9049054013a1b77]*/
